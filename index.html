@@ -63,6 +63,9 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--guide);outline-
 .pri{background:var(--guide);color:#2a2100;border-color:var(--guide)}
 .danger{color:var(--bad)}
 
+/* Vista */
+#btnVista{position:fixed;left:max(10px,env(safe-area-inset-left,0px));bottom:calc(env(safe-area-inset-bottom,0px) + 84px);z-index:550;min-width:72px}
+#brujula{display:inline-block;font-size:20px;color:var(--bad);transition:transform .3s}
 /* Simulador */
 #simPad{position:fixed;right:max(10px,env(safe-area-inset-right,0px));bottom:calc(env(safe-area-inset-bottom,0px) + 84px);z-index:550;display:grid;grid-template-columns:repeat(3,52px);gap:6px}
 #simPad .btn{min-height:48px;padding:0;font-size:20px}
@@ -120,6 +123,8 @@ input,select{background:#0f1418;border:1px solid var(--line);border-radius:8px;c
   <button class="btn pri" id="recMain">Marcar A</button>
   <button class="btn" id="recCancel">Cancelar</button>
 </div>
+
+<button class="btn" id="btnVista"><span id="brujula">⬆&#xFE0E;</span><small id="vistaTxt">Derecho</small></button>
 
 <div id="simPad" hidden>
   <span></span><button class="btn" id="simUp">▲</button><span></span>
@@ -188,6 +193,7 @@ input,select{background:#0f1418;border:1px solid var(--line);border-radius:8px;c
 <div id="toast" hidden></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js"></script>
 <script>
 "use strict";
 const $=id=>document.getElementById(id);
@@ -217,7 +223,7 @@ function guardarLuego(){clearTimeout(saveTimer);saveTimer=setTimeout(guardar,300
 function toast(t){const el=$('toast');el.textContent=t;el.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>el.hidden=true,2600)}
 
 /* ---------- Mapa ---------- */
-const map=L.map('map',{zoomControl:false,attributionControl:false}).setView([-32.6,-55.9],7);
+const map=L.map('map',{zoomControl:false,attributionControl:false,rotate:true,bearing:0,touchRotate:false,rotateControl:false,shiftKeyRotate:false}).setView([-32.6,-55.9],7);
 L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:21,maxNativeZoom:19}).addTo(map);
 const capaCob=L.layerGroup().addTo(map);
 const capaGuia=L.layerGroup().addTo(map);
@@ -374,7 +380,7 @@ function terminarRec(){
   campo.shift=0;
   rec=null; capaRec.clearLayers(); $('recBar').hidden=true;
   O=null; setOrigen(campo.guia.pts[0]); prepararGuia(); guardar();
-  toast('Guía guardada');
+  toast('Guía guardada'); aplicarVista(true);
   if(pos)onPos(pos.ll,pos.acc,pos.v);
 }
 
@@ -391,10 +397,9 @@ function onPos(ll,acc,v){
   if(!tractor){tractor=L.marker(ll,{icon:tractorIcon,interactive:false,zIndexOffset:1000}).addTo(map);barral=L.polyline([ll,ll],{color:'#ffd23f',weight:3,interactive:false}).addTo(map);map.setView(ll,18)}
   tractor.setLatLng(ll);
   if(ultimoRumbo){
-    const ang=Math.atan2(ultimoRumbo[0],ultimoRumbo[1])*180/Math.PI;
-    const svg=tractor.getElement()&&tractor.getElement().querySelector('svg');if(svg)svg.style.transform='rotate('+ang+'deg)';
     if(campo){const w=campo.ancho/2,nx=-ultimoRumbo[1],ny=ultimoRumbo[0];barral.setLatLngs([toLL([p[0]+nx*w,p[1]+ny*w]),toLL([p[0]-nx*w,p[1]-ny*w])])}
   }
+  aplicarVista(false);
   if(seguir)map.panTo(ll,{animate:false});
 
   $('vel').textContent=fmt(v||0);
@@ -440,6 +445,43 @@ function guiar(){
   for(let i=1;i<=nLed;i++){const idx=lado<0?7-i:7+i;if(lado!==0)leds[idx].className=cls}
   if(lado<0)$('arrowL').classList.add('on');else if(lado>0)$('arrowR').classList.add('on');
 }
+
+/* Vista: guía derecha (rumbo arriba) o norte arriba */
+let vista='rumbo', bearingAct=0;
+try{vista=localStorage.getItem('guiagps_vista')||'rumbo'}catch(e){}
+const puedeRotar=typeof map.setBearing==='function';
+function rumboDeg(v){return Math.atan2(v[0],v[1])*180/Math.PI}
+function angDiff(a,b){return ((a-b)%360+540)%360-180}
+function bearingObjetivo(){
+  if(vista==='norte'||!ultimoRumbo)return vista==='norte'?0:bearingAct;
+  let h=rumboDeg(ultimoRumbo);
+  if(G&&G.tipo==='ab'){const a=G.xy[0],b=G.xy[1];const lh=rumboDeg([b[0]-a[0],b[1]-a[1]]);h=Math.abs(angDiff(h,lh))<=90?lh:lh+180}
+  return -h;
+}
+function aplicarVista(forzar){
+  const obj=bearingObjetivo();
+  const d=angDiff(obj,bearingAct);
+  if(forzar||Math.abs(d)>12)bearingAct=obj;
+  else if(Math.abs(d)>1.5)bearingAct+=d*0.35;
+  else if(!forzar)return actualizarIconos();
+  bearingAct=((bearingAct%360)+360)%360;
+  if(puedeRotar)map.setBearing(bearingAct);
+  actualizarIconos();
+}
+function actualizarIconos(){
+  const b=puedeRotar?bearingAct:0;
+  $('brujula').style.transform='rotate('+b+'deg)';
+  if(tractor&&ultimoRumbo){const svg=tractor.getElement()&&tractor.getElement().querySelector('svg');if(svg)svg.style.transform='rotate('+(rumboDeg(ultimoRumbo)+b)+'deg)'}
+}
+function textoVista(){$('vistaTxt').textContent=vista==='norte'?'Norte':'Derecho'}
+$('btnVista').onclick=()=>{
+  if(!puedeRotar){toast('No se pudo cargar el giro del mapa');return}
+  vista=vista==='norte'?'rumbo':'norte';try{localStorage.setItem('guiagps_vista',vista)}catch(e){}
+  textoVista();aplicarVista(true);
+  toast(vista==='norte'?'Mapa con el norte arriba':'Mapa girado: la guía queda derecha');
+  if(pos&&seguir)map.panTo(pos.ll,{animate:false});
+};
+textoVista();
 
 /* GPS real */
 let gpsId=null;
