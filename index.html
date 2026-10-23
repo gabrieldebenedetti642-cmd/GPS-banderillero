@@ -224,7 +224,7 @@ function toast(t){const el=$('toast');el.textContent=t;el.hidden=false;clearTime
 
 /* ---------- Mapa ---------- */
 const map=L.map('map',{zoomControl:false,attributionControl:false,rotate:true,bearing:0,touchRotate:false,rotateControl:false,shiftKeyRotate:false}).setView([-32.6,-55.9],7);
-L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:21,maxNativeZoom:19}).addTo(map);
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:21,maxNativeZoom:17}).addTo(map);
 const capaCob=L.layerGroup().addTo(map);
 const capaGuia=L.layerGroup().addTo(map);
 const capaRec=L.layerGroup().addTo(map);
@@ -391,7 +391,7 @@ function onPos(ll,acc,v){
   const p=toXY(ll);
   // rumbo según el avance
   if(!refRumbo)refRumbo=p;
-  else if(dist(refRumbo,p)>=1.5){const h=[p[0]-refRumbo[0],p[1]-refRumbo[1]],L=Math.hypot(h[0],h[1]);ultimoRumbo=[h[0]/L,h[1]/L];refRumbo=p}
+  else if(dist(refRumbo,p)>=3){const h=[p[0]-refRumbo[0],p[1]-refRumbo[1]],L=Math.hypot(h[0],h[1]);ultimoRumbo=[h[0]/L,h[1]/L];refRumbo=p}
   pos={ll,p,acc,v};
 
   if(!tractor){tractor=L.marker(ll,{icon:tractorIcon,interactive:false,zIndexOffset:1000}).addTo(map);barral=L.polyline([ll,ll],{color:'#ffd23f',weight:3,interactive:false}).addTo(map);map.setView(ll,18)}
