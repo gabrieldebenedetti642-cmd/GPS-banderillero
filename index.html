@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#12171b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Guía GPS GD</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600&family=Barlow+Condensed:wght@600;700&display=swap">
+<style>
+/* Cabina de tractor: mapa a pantalla completa, banderillero arriba, mandos grandes abajo */
+:root{
+  --bg:#12171b; --panel:#1b2228; --line:#2c363e; --fg:#eef2f0; --muted:#9aa7a4;
+  --ok:#3ddc84; --warn:#ffc531; --bad:#ff5a4e; --guide:#ffd23f; --cover:#3ddc84; --rec:#ff5a4e;
+  --f-num:"Barlow Condensed","Arial Narrow",sans-serif; --f-ui:"Barlow",system-ui,sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidden}
+button{font:inherit;color:inherit;border:0;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:2px solid var(--guide);outline-offset:2px}
+#map{position:fixed;inset:0;background:#0b0f12}
+.leaflet-container{background:#0b0f12}
+
+/* Banderillero */
+#bar{position:fixed;top:0;left:0;right:0;z-index:500;padding:calc(env(safe-area-inset-top,0px) + 8px) max(10px,env(safe-area-inset-right,0px)) 8px max(10px,env(safe-area-inset-left,0px));
+  background:rgba(18,23,27,.92);border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+#leds{display:grid;grid-template-columns:repeat(15,1fr);gap:4px;height:16px}
+#leds i{border-radius:3px;background:#273038}
+#leds i.on-g{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+#leds i.on-y{background:var(--warn);box-shadow:0 0 8px var(--warn)}
+#leds i.on-r{background:var(--bad);box-shadow:0 0 8px var(--bad)}
+#readout{display:flex;align-items:center;justify-content:center;gap:14px;font-family:var(--f-num);font-weight:700;line-height:1}
+#arrowL,#arrowR{font-size:40px;color:#273038;width:44px;text-align:center}
+#arrowL.on,#arrowR.on{color:var(--warn)}
+#err{font-size:46px;min-width:150px;text-align:center;font-variant-numeric:tabular-nums}
+#err.ok{color:var(--ok)}
+#sub{display:flex;justify-content:space-between;gap:8px;font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;flex-wrap:wrap}
+#sub b{color:var(--fg);font-weight:600}
+#campoName{font-weight:600;color:var(--fg)}
+
+/* Mandos */
+#controls{position:fixed;left:0;right:0;bottom:0;z-index:500;display:flex;gap:8px;align-items:stretch;
+  padding:8px max(10px,env(safe-area-inset-right,0px)) calc(env(safe-area-inset-bottom,0px) + 8px) max(10px,env(safe-area-inset-left,0px));
+  background:rgba(18,23,27,.92);border-top:1px solid var(--line)}
+.btn{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-height:56px;font-weight:600;font-size:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
+.btn small{font-size:11px;color:var(--muted);font-weight:400}
+.btn.on{border-color:var(--guide);color:var(--guide)}
+#btnSpray{flex:1;font-family:var(--f-num);font-size:22px;letter-spacing:.04em;background:#20302a;border-color:#2f5a44}
+#btnSpray.on{background:var(--ok);color:#06210f;border-color:var(--ok)}
+
+/* Grabación de guía */
+#recBar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0px) + 84px);z-index:600;
+  background:var(--panel);border:1px solid var(--rec);border-radius:12px;padding:10px;display:flex;gap:8px;align-items:center;max-width:calc(100% - 20px);flex-wrap:wrap;justify-content:center}
+#recBar p{margin:0 6px;font-size:14px}
+#recBar .dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--rec);margin-right:6px;animation:blink 1s infinite}
+@keyframes blink{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){#recBar .dot{animation:none}}
+.pri{background:var(--guide);color:#2a2100;border-color:var(--guide)}
+.danger{color:var(--bad)}
+
+/* Simulador */
+#simPad{position:fixed;right:max(10px,env(safe-area-inset-right,0px));bottom:calc(env(safe-area-inset-bottom,0px) + 84px);z-index:550;display:grid;grid-template-columns:repeat(3,52px);gap:6px}
+#simPad .btn{min-height:48px;padding:0;font-size:20px}
+
+/* Paneles */
+.panel{position:fixed;inset:0;z-index:1000;background:var(--bg);overflow-y:auto;
+  padding:calc(env(safe-area-inset-top,0px) + 16px) max(16px,env(safe-area-inset-right,0px)) calc(env(safe-area-inset-bottom,0px) + 24px) max(16px,env(safe-area-inset-left,0px))}
+.wrap{max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+.panel h1{font-family:var(--f-num);font-size:32px;margin:0;letter-spacing:.02em}
+.panel h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:8px 0 0}
+.hdr{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.row > *{flex:1 1 auto}
+label{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+input,select{background:#0f1418;border:1px solid var(--line);border-radius:8px;color:var(--fg);padding:12px;font:inherit;font-size:17px;width:100%}
+.campo{display:flex;align-items:center;gap:10px}
+.campo .info{flex:1;min-width:0}
+.campo .info b{display:block;font-size:18px;overflow-wrap:anywhere}
+.campo .info span{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+.empty{color:var(--muted);text-align:center;padding:20px 8px;line-height:1.5}
+.shift{font-family:var(--f-num);font-size:26px;min-width:90px;text-align:center;font-variant-numeric:tabular-nums}
+.note{font-size:13px;color:var(--muted);line-height:1.5;margin:0}
+
+#toast{position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + 120px);transform:translateX(-50%);z-index:2000;background:#000c;color:#fff;padding:10px 16px;border-radius:10px;font-size:15px;max-width:90%;text-align:center}
+.tractor svg{filter:drop-shadow(0 0 3px #000)}
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="bar">
+  <div id="leds"></div>
+  <div id="readout"><span id="arrowL">◀&#xFE0E;</span><span id="err">--</span><span id="arrowR">▶&#xFE0E;</span></div>
+  <div id="sub">
+    <span id="campoName">—</span>
+    <span>Pasada <b id="pasada">–</b></span>
+    <span><b id="vel">0,0</b> km/h</span>
+    <span><b id="ha">0,00</b> ha</span>
+    <span>GPS <b id="acc">–</b></span>
+  </div>
+</div>
+
+<div id="controls">
+  <button class="btn" id="btnCampos">☰<small>Campos</small></button>
+  <button class="btn" id="btnGuia">⇶<small>Guía</small></button>
+  <button class="btn" id="btnSpray">TRABAJAR</button>
+  <button class="btn on" id="btnSeguir">◎<small>Seguir</small></button>
+  <button class="btn" id="btnSim">⚙<small>Prueba</small></button>
+</div>
+
+<div id="recBar" hidden>
+  <p id="recTxt"><span class="dot"></span>Grabando</p>
+  <button class="btn pri" id="recMain">Marcar A</button>
+  <button class="btn" id="recCancel">Cancelar</button>
+</div>
+
+<div id="simPad" hidden>
+  <span></span><button class="btn" id="simUp">▲</button><span></span>
+  <button class="btn" id="simL">↶</button><button class="btn" id="simDown">▼</button><button class="btn" id="simR">↷</button>
+</div>
+
+<!-- Panel de campos -->
+<div class="panel" id="panelCampos">
+  <div class="wrap">
+    <div class="hdr"><h1>Guía GPS GD</h1><button class="btn" id="closeCampos" hidden>✕</button></div>
+    <div class="card">
+      <h2 style="margin:0">Nuevo campo</h2>
+      <label>Nombre<input id="nNombre" placeholder="Ej: Potrero 5 – Soja" autocomplete="off"></label>
+      <label>Labor<select id="nLabor"></select></label>
+      <label>Ancho de labor (metros)<input id="nAncho" type="number" inputmode="decimal" step="0.5" min="1" value="15"></label>
+      <button class="btn pri" id="btnCrear">Crear campo</button>
+    </div>
+    <h2>Campos guardados</h2>
+    <div id="lista" style="display:flex;flex-direction:column;gap:10px"></div>
+    <h2>Copia de seguridad</h2>
+    <div class="row">
+      <button class="btn" id="btnExport">Exportar todo</button>
+      <button class="btn" id="btnImport">Importar</button>
+      <input type="file" id="fileImport" accept=".json,application/json" hidden>
+    </div>
+    <p class="note">Todo se guarda en este aparato. Exportá cada tanto para no perder nada si se borra el navegador, o para pasar los campos del celular a la tablet.</p>
+  </div>
+</div>
+
+<!-- Panel de guía -->
+<div class="panel" id="panelGuia" hidden>
+  <div class="wrap">
+    <div class="hdr"><h1>Guía</h1><button class="btn" id="closeGuia">✕</button></div>
+    <div class="card">
+      <span id="guiaEstado" class="note">Sin guía marcada.</span>
+      <h2 style="margin:0">Marcar nueva guía</h2>
+      <div class="row">
+        <button class="btn" data-nueva="ab">━<small>Recta A-B</small></button>
+        <button class="btn" data-nueva="curva">∿<small>Curva</small></button>
+        <button class="btn" data-nueva="contorno">◯<small>Contorno</small></button>
+      </div>
+      <p class="note"><b>Recta:</b> marcás A, andás en línea recta y marcás B.<br><b>Curva:</b> grabás la primera pasada manejando; las demás quedan paralelas.<br><b>Contorno:</b> das la vuelta al borde del campo; las pasadas van hacia adentro.</p>
+    </div>
+    <div class="card">
+      <h2 style="margin:0">Labor</h2>
+      <select id="gLabor"></select>
+      <h2 style="margin:0">Ancho de labor</h2>
+      <div class="row"><input id="gAncho" type="number" inputmode="decimal" step="0.5" min="1"><span style="flex:0">m</span></div>
+    </div>
+    <div class="card">
+      <h2 style="margin:0">Corregir corrimiento del GPS</h2>
+      <p class="note">Si al volver otro día la guía no coincide con lo hecho, movela de a medio metro.</p>
+      <div class="row" style="justify-content:center">
+        <button class="btn" id="shiftM" style="flex:0 0 64px">◀ 0,5</button>
+        <span class="shift" id="shiftVal" style="flex:0">0,0 m</span>
+        <button class="btn" id="shiftP" style="flex:0 0 64px">0,5 ▶</button>
+      </div>
+    </div>
+    <div class="card">
+      <button class="btn danger" id="btnBorrarCob">Borrar lo pulverizado</button>
+      <button class="btn danger" id="btnBorrarGuia">Borrar la guía</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const KEY='guiagps_gd_campos_v1';
+const fmt=(n,d=1)=>n.toLocaleString('es-UY',{minimumFractionDigits:d,maximumFractionDigits:d});
+
+/* ---------- Labores ---------- */
+const LABORES={
+  pulverizar:{n:'Pulverización',btn:'PULVERIZAR',on:'PULVERIZANDO',c:'#3ddc84'},
+  fertilizar:{n:'Fertilización',btn:'FERTILIZAR',on:'FERTILIZANDO',c:'#4fc3f7'},
+  siembra:{n:'Siembra',btn:'SEMBRAR',on:'SEMBRANDO',c:'#c39bff'},
+  rotativa:{n:'Rotativa',btn:'ROTATIVA',on:'PASANDO ROTATIVA',c:'#ff9f43'},
+  subsolador:{n:'Subsolador',btn:'SUBSOLAR',on:'SUBSOLANDO',c:'#e0b36b'}
+};
+const labor=()=>LABORES[(campo&&campo.labor)||'pulverizar']||LABORES.pulverizar;
+['nLabor','gLabor'].forEach(id=>{const sel=document.getElementById(id);Object.entries(LABORES).forEach(([k,v])=>{const o=document.createElement('option');o.value=k;o.textContent=v.n;sel.appendChild(o)})});
+function textoBoton(){const b=document.getElementById('btnSpray');b.textContent=pulverizando?labor().on:labor().btn;b.style.background=pulverizando?labor().c:'';b.style.borderColor=pulverizando?labor().c:''}
+
+/* ---------- Datos ---------- */
+let campos=[];
+try{campos=JSON.parse(localStorage.getItem(KEY))||[]}catch(e){campos=[]}
+let campo=null;
+function guardar(){try{localStorage.setItem(KEY,JSON.stringify(campos))}catch(e){toast('No se pudo guardar en este aparato')}}
+let saveTimer=null;
+function guardarLuego(){clearTimeout(saveTimer);saveTimer=setTimeout(guardar,3000)}
+
+function toast(t){const el=$('toast');el.textContent=t;el.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>el.hidden=true,2600)}
+
+/* ---------- Mapa ---------- */
+const map=L.map('map',{zoomControl:false,attributionControl:false}).setView([-32.6,-55.9],7);
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:21,maxNativeZoom:19}).addTo(map);
+const capaCob=L.layerGroup().addTo(map);
+const capaGuia=L.layerGroup().addTo(map);
+const capaRec=L.layerGroup().addTo(map);
+const tractorIcon=L.divIcon({className:'tractor',iconSize:[34,34],iconAnchor:[17,17],
+  html:'<svg id="tri" width="34" height="34" viewBox="0 0 34 34"><polygon points="17,2 30,31 17,24 4,31" fill="#ffd23f" stroke="#000" stroke-width="2"/></svg>'});
+let tractor=null, barral=null;
+
+let seguir=true;
+map.on('dragstart',()=>{seguir=false;$('btnSeguir').classList.remove('on')});
+$('btnSeguir').onclick=()=>{seguir=true;$('btnSeguir').classList.add('on');if(pos)map.setView(pos.ll,Math.max(map.getZoom(),17))};
+
+/* ---------- Proyección local en metros ---------- */
+let O=null;
+function setOrigen(ll){O={lat:ll[0],lng:ll[1],c:Math.cos(ll[0]*Math.PI/180)}}
+const toXY=ll=>[(ll[1]-O.lng)*111320*O.c,(ll[0]-O.lat)*110574];
+const toLL=p=>[O.lat+p[1]/110574,O.lng+p[0]/(111320*O.c)];
+const dist=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1]);
+
+/* ---------- Geometría de la guía ---------- */
+let G=null; // {tipo, xy, area}
+function prepararGuia(){
+  G=null;
+  if(!campo||!campo.guia)return;
+  const g=campo.guia;
+  if(!O)setOrigen(g.pts[0]);
+  const xy=g.pts.map(toXY);
+  let area=0;
+  if(g.tipo==='contorno'){for(let i=0;i<xy.length;i++){const a=xy[i],b=xy[(i+1)%xy.length];area+=a[0]*b[1]-b[0]*a[1]}}
+  G={tipo:g.tipo,xy,area};
+  kDibujado=null;
+}
+function dentro(p,P){let c=false;for(let i=0,j=P.length-1;i<P.length;j=i++){const a=P[i],b=P[j];if((a[1]>p[1])!==(b[1]>p[1])&&p[0]<(b[0]-a[0])*(p[1]-a[1])/(b[1]-a[1])+a[0])c=!c}return c}
+
+// distancia con signo a la guía y dirección en la que crece
+function medir(p){
+  const P=G.xy, cerrado=G.tipo==='contorno', nseg=cerrado?P.length:P.length-1;
+  let best=null;
+  for(let i=0;i<nseg;i++){
+    const a=P[i],b=P[(i+1)%P.length],dx=b[0]-a[0],dy=b[1]-a[1],L2=dx*dx+dy*dy;
+    if(!L2)continue;
+    let t=((p[0]-a[0])*dx+(p[1]-a[1])*dy)/L2;
+    if(cerrado)t=Math.min(1,Math.max(0,t));
+    else{if(i>0)t=Math.max(t,0);if(i<nseg-1)t=Math.min(t,1)}
+    const q=[a[0]+t*dx,a[1]+t*dy],ex=p[0]-q[0],ey=p[1]-q[1],d=Math.hypot(ex,ey);
+    if(!best||d<best.d){const L=Math.sqrt(L2);best={d,q,nl:[-dy/L,dx/L],cr:dx*ey-dy*ex}}
+  }
+  if(!best)return null;
+  if(cerrado){
+    const s=dentro(p,P)?1:-1;
+    const n=best.d>0.05?[(p[0]-best.q[0])/best.d*s,(p[1]-best.q[1])/best.d*s]:(G.area>0?best.nl:[-best.nl[0],-best.nl[1]]);
+    return {d:s*best.d,n};
+  }
+  return {d:(best.cr>=0?1:-1)*best.d,n:best.nl};
+}
+
+// línea paralela k para dibujar
+function paralela(k){
+  const P=G.xy, cerrado=G.tipo==='contorno', w=campo.ancho;
+  const off=(cerrado?w/2:0)+k*w+(campo.shift||0);
+  const sg=cerrado?(G.area>0?1:-1):1;
+  const n=P.length, segN=[];
+  const nseg=cerrado?n:n-1;
+  for(let i=0;i<nseg;i++){const a=P[i],b=P[(i+1)%n],L=dist(a,b)||1;segN.push([-(b[1]-a[1])/L*sg,(b[0]-a[0])/L*sg])}
+  let out=[];
+  for(let i=0;i<n;i++){
+    let n1,n2;
+    if(cerrado){n1=segN[(i-1+nseg)%nseg];n2=segN[i%nseg]}
+    else{n1=segN[Math.max(0,i-1)];n2=segN[Math.min(nseg-1,i)]}
+    let vx=n1[0]+n2[0],vy=n1[1]+n2[1];const L=Math.hypot(vx,vy)||1;vx/=L;vy/=L;
+    const cos=Math.max(0.35,vx*n1[0]+vy*n1[1]);
+    out.push([P[i][0]+vx*off/cos,P[i][1]+vy*off/cos]);
+  }
+  if(cerrado)out.push(out[0]);
+  else{ // estirar los extremos
+    const ext=G.tipo==='ab'?3000:400;
+    const a=out[0],b=out[1],y=out[out.length-2],z=out[out.length-1];
+    const u1=[(a[0]-b[0])/(dist(a,b)||1),(a[1]-b[1])/(dist(a,b)||1)];
+    const u2=[(z[0]-y[0])/(dist(y,z)||1),(z[1]-y[1])/(dist(y,z)||1)];
+    out.unshift([a[0]+u1[0]*ext,a[1]+u1[1]*ext]);
+    out.push([z[0]+u2[0]*ext,z[1]+u2[1]*ext]);
+  }
+  return out.map(toLL);
+}
+
+let kDibujado=null;
+function dibujarGuia(kAct){
+  if(!G){capaGuia.clearLayers();kDibujado=null;return}
+  if(kAct===kDibujado)return;
+  kDibujado=kAct; capaGuia.clearLayers();
+  const k0=kAct==null?0:kAct;
+  for(let k=k0-4;k<=k0+4;k++){
+    if(G.tipo==='contorno'&&k<0)continue;
+    const act=k===kAct;
+    L.polyline(paralela(k),{color:act?'#ffd23f':'#ffffff',weight:act?4:1.5,opacity:act?1:.55,dashArray:act?null:'6 6',interactive:false}).addTo(capaGuia);
+  }
+  if(G.tipo==='contorno')L.polygon(campo.guia.pts,{color:'#ff8c42',weight:2,fill:false,interactive:false}).addTo(capaGuia);
+}
+
+/* ---------- Cobertura (lo pulverizado) ---------- */
+function anchoPx(){const lat=map.getCenter().lat;const mpp=40075016.686*Math.cos(lat*Math.PI/180)/(256*Math.pow(2,map.getZoom()));return Math.max(2,campo.ancho/mpp)}
+let tramoActual=null, capaTramo=null;
+function dibujarCobertura(){
+  capaCob.clearLayers(); capaTramo=null;
+  if(!campo)return;
+  const w=anchoPx();
+  campo.cob.forEach(t=>{if(t.length>1)L.polyline(t,{color:labor().c,weight:w,opacity:.45,lineCap:'butt',lineJoin:'round',interactive:false}).addTo(capaCob)});
+}
+map.on('zoomend',()=>{if(!campo)return;const w=anchoPx();capaCob.eachLayer(l=>l.setStyle({weight:w}))});
+
+let pulverizando=false;
+$('btnSpray').onclick=()=>{
+  if(!campo){toast('Primero abrí o creá un campo');return}
+  pulverizando=!pulverizando;
+  $('btnSpray').classList.toggle('on',pulverizando);
+  textoBoton();
+  if(pulverizando){tramoActual=pos?[pos.ll]:[];campo.cob.push(tramoActual);capaTramo=L.polyline(tramoActual,{color:labor().c,weight:anchoPx(),opacity:.45,lineCap:'butt',lineJoin:'round',interactive:false}).addTo(capaCob)}
+  else{tramoActual=null;capaTramo=null;campo.cob=campo.cob.filter(t=>t.length>1);guardar()}
+};
+
+/* ---------- Grabación de guía ---------- */
+let rec=null, recLine=null;
+function iniciarRec(tipo){
+  if(!pos){toast('Esperando señal GPS… (o usá el modo Prueba)');return}
+  rec={tipo,pts:[]}; capaRec.clearLayers();
+  recLine=L.polyline([],{color:'#ff5a4e',weight:4,dashArray:tipo==='ab'?'8 8':null}).addTo(capaRec);
+  $('recBar').hidden=false; cerrarPaneles(); actualizarRecUI();
+}
+function actualizarRecUI(){
+  const t=$('recTxt'),b=$('recMain');
+  if(rec.tipo==='ab'){
+    if(!rec.pts.length){t.innerHTML='<span class="dot"></span>Parate al inicio de la pasada';b.textContent='Marcar A'}
+    else{t.innerHTML='<span class="dot"></span>Andá derecho y marcá B';b.textContent='Marcar B'}
+  }else{
+    t.innerHTML='<span class="dot"></span>'+(rec.tipo==='curva'?'Grabando curva':'Grabando contorno')+' · '+rec.pts.length+' puntos';
+    b.textContent='Terminar';
+  }
+}
+$('recMain').onclick=()=>{
+  if(!rec)return;
+  if(rec.tipo==='ab'){
+    if(!rec.pts.length){rec.pts.push(pos.ll);L.circleMarker(pos.ll,{radius:7,color:'#ff5a4e',fillOpacity:1}).addTo(capaRec).bindTooltip('A',{permanent:true});actualizarRecUI();return}
+    if(!O)setOrigen(rec.pts[0]);
+    if(dist(toXY(rec.pts[0]),toXY(pos.ll))<10){toast('Alejate al menos 10 m de A para marcar B');return}
+    rec.pts.push(pos.ll); terminarRec(); return;
+  }
+  if(rec.tipo==='curva'&&rec.pts.length<3){toast('Seguí andando, todavía hay pocos puntos');return}
+  if(rec.tipo==='contorno'&&rec.pts.length<4){toast('Seguí dando la vuelta al campo');return}
+  terminarRec();
+};
+$('recCancel').onclick=()=>{rec=null;capaRec.clearLayers();$('recBar').hidden=true};
+function terminarRec(){
+  campo.guia={tipo:rec.tipo,pts:rec.pts};
+  campo.shift=0;
+  rec=null; capaRec.clearLayers(); $('recBar').hidden=true;
+  O=null; setOrigen(campo.guia.pts[0]); prepararGuia(); guardar();
+  toast('Guía guardada');
+  if(pos)onPos(pos.ll,pos.acc,pos.v);
+}
+
+/* ---------- Posición ---------- */
+let pos=null, ultimoRumbo=null, refRumbo=null;
+function onPos(ll,acc,v){
+  if(!O)setOrigen(ll);
+  const p=toXY(ll);
+  // rumbo según el avance
+  if(!refRumbo)refRumbo=p;
+  else if(dist(refRumbo,p)>=1.5){const h=[p[0]-refRumbo[0],p[1]-refRumbo[1]],L=Math.hypot(h[0],h[1]);ultimoRumbo=[h[0]/L,h[1]/L];refRumbo=p}
+  pos={ll,p,acc,v};
+
+  if(!tractor){tractor=L.marker(ll,{icon:tractorIcon,interactive:false,zIndexOffset:1000}).addTo(map);barral=L.polyline([ll,ll],{color:'#ffd23f',weight:3,interactive:false}).addTo(map);map.setView(ll,18)}
+  tractor.setLatLng(ll);
+  if(ultimoRumbo){
+    const ang=Math.atan2(ultimoRumbo[0],ultimoRumbo[1])*180/Math.PI;
+    const svg=tractor.getElement()&&tractor.getElement().querySelector('svg');if(svg)svg.style.transform='rotate('+ang+'deg)';
+    if(campo){const w=campo.ancho/2,nx=-ultimoRumbo[1],ny=ultimoRumbo[0];barral.setLatLngs([toLL([p[0]+nx*w,p[1]+ny*w]),toLL([p[0]-nx*w,p[1]-ny*w])])}
+  }
+  if(seguir)map.panTo(ll,{animate:false});
+
+  $('vel').textContent=fmt(v||0);
+  $('acc').textContent=acc!=null?'± '+fmt(acc,0)+' m':'–';
+
+  // grabando guía
+  if(rec&&rec.tipo!=='ab'){
+    const last=rec.pts[rec.pts.length-1];
+    if(!last||dist(toXY(last),p)>=2){rec.pts.push(ll);recLine.addLatLng(ll);actualizarRecUI()}
+  }
+  // pulverizado
+  if(pulverizando&&tramoActual&&campo){
+    const last=tramoActual[tramoActual.length-1];
+    if(!last){tramoActual.push(ll);capaTramo.addLatLng(ll)}
+    else{const d=dist(toXY(last),p);if(d>=1){tramoActual.push(ll);capaTramo.addLatLng(ll);campo.ha=(campo.ha||0)+d*campo.ancho/10000;guardarLuego()}}
+  }
+  $('ha').textContent=fmt(campo?campo.ha||0:0,2);
+
+  guiar();
+}
+
+function guiar(){
+  const leds=document.querySelectorAll('#leds i');
+  leds.forEach(l=>l.className='');
+  $('arrowL').classList.remove('on');$('arrowR').classList.remove('on');
+  if(!G||!pos||rec){$('err').textContent=G?'--':'SIN GUÍA';$('err').className='';$('pasada').textContent='–';dibujarGuia(null);return}
+  const r=medir(pos.p); if(!r)return;
+  const w=campo.ancho, off0=G.tipo==='contorno'?w/2:0, dd=r.d-(campo.shift||0);
+  let k=Math.round((dd-off0)/w); if(G.tipo==='contorno'&&k<0)k=0;
+  const e=dd-(off0+k*w);
+  dibujarGuia(k);
+  $('pasada').textContent=G.tipo==='contorno'?String(k+1):(k>0?'+'+k:String(k));
+  const ae=Math.abs(e);
+  $('err').textContent=ae<1?Math.round(ae*100)+' cm':fmt(ae,1)+' m';
+  $('err').className=ae<0.3?'ok':'';
+  if(ae<0.3){leds[7].className='on-g';return}
+  // hacia qué lado doblar: mover -e sobre n
+  let lado=0;
+  if(ultimoRumbo){const vx=-e*r.n[0],vy=-e*r.n[1];const cr=ultimoRumbo[0]*vy-ultimoRumbo[1]*vx;lado=cr>0?-1:1}
+  const nLed=Math.min(7,Math.ceil(ae/0.25));
+  const cls=ae<1?'on-y':'on-r';
+  leds[7].className='on-g';
+  for(let i=1;i<=nLed;i++){const idx=lado<0?7-i:7+i;if(lado!==0)leds[idx].className=cls}
+  if(lado<0)$('arrowL').classList.add('on');else if(lado>0)$('arrowR').classList.add('on');
+}
+
+/* GPS real */
+let gpsId=null;
+function iniciarGPS(){
+  if(!('geolocation' in navigator)){toast('Este aparato no tiene GPS disponible');return}
+  gpsId=navigator.geolocation.watchPosition(
+    g=>{if(sim.on)return;onPos([g.coords.latitude,g.coords.longitude],g.coords.accuracy,g.coords.speed!=null?g.coords.speed*3.6:0)},
+    err=>toast(err.code===1?'Permití el acceso a la ubicación para usar la guía':'Sin señal GPS'),
+    {enableHighAccuracy:true,maximumAge:0,timeout:20000});
+}
+
+/* Modo prueba (simulador) */
+const sim={on:false,ll:null,rumbo:0,v:12,timer:null};
+$('btnSim').onclick=()=>{
+  sim.on=!sim.on;$('btnSim').classList.toggle('on',sim.on);$('simPad').hidden=!sim.on;
+  if(sim.on){
+    sim.ll=pos?pos.ll:[map.getCenter().lat,map.getCenter().lng];
+    toast('Modo prueba: manejá con las flechas');
+    sim.timer=setInterval(()=>{
+      const m=sim.v/3.6*0.25, r=sim.rumbo*Math.PI/180, c=Math.cos(sim.ll[0]*Math.PI/180);
+      sim.ll=[sim.ll[0]+Math.cos(r)*m/110574,sim.ll[1]+Math.sin(r)*m/(111320*c)];
+      onPos(sim.ll,0.5,sim.v);
+    },250);
+  }else{clearInterval(sim.timer);toast('Modo prueba apagado, usando GPS')}
+};
+$('simL').onclick=()=>sim.rumbo-=4;
+$('simR').onclick=()=>sim.rumbo+=4;
+$('simUp').onclick=()=>sim.v=Math.min(30,sim.v+2);
+$('simDown').onclick=()=>sim.v=Math.max(0,sim.v-2);
+
+/* Pantalla siempre encendida */
+let wake=null;
+async function mantenerPantalla(){try{if('wakeLock' in navigator&&document.visibilityState==='visible')wake=await navigator.wakeLock.request('screen')}catch(e){}}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')mantenerPantalla();else guardar()});
+
+/* ---------- Paneles ---------- */
+function cerrarPaneles(){$('panelCampos').hidden=true;$('panelGuia').hidden=true}
+function dibujarLista(){
+  const el=$('lista'); el.innerHTML='';
+  if(!campos.length){el.innerHTML='<div class="empty">Todavía no hay campos.<br>Creá uno arriba con su nombre y el ancho del pulverizador.</div>';return}
+  campos.slice().sort((a,b)=>b.usado-a.usado).forEach(c=>{
+    const d=document.createElement('div');d.className='card campo';
+    const tipo=c.guia?({ab:'Recta A-B',curva:'Curva',contorno:'Contorno'})[c.guia.tipo]:'Sin guía';
+    d.innerHTML='<div class="info"><b></b><span></span></div><button class="btn pri">Abrir</button><button class="btn danger">✕</button>';
+    d.querySelector('b').textContent=c.nombre;
+    d.querySelector('span').textContent=(LABORES[c.labor]||LABORES.pulverizar).n+' · '+fmt(c.ancho)+' m · '+tipo+' · '+fmt(c.ha||0,2)+' ha · '+new Date(c.usado).toLocaleDateString('es-UY');
+    const [abrir,borrar]=d.querySelectorAll('button');
+    abrir.onclick=()=>abrirCampo(c.id);
+    borrar.onclick=()=>{
+      if(borrar.dataset.ok){campos=campos.filter(x=>x.id!==c.id);if(campo&&campo.id===c.id)salirCampo();guardar();dibujarLista()}
+      else{borrar.dataset.ok=1;borrar.textContent='¿Borrar?';setTimeout(()=>{delete borrar.dataset.ok;borrar.textContent='✕'},3000)}
+    };
+    el.appendChild(d);
+  });
+}
+$('btnCrear').onclick=()=>{
+  const nombre=$('nNombre').value.trim(), ancho=parseFloat(String($('nAncho').value).replace(',','.'));
+  if(!nombre){toast('Ponele un nombre al campo');return}
+  if(!(ancho>0)){toast('Poné un ancho válido en metros');return}
+  const c={id:Date.now().toString(36),nombre,ancho,labor:$('nLabor').value,guia:null,shift:0,cob:[],ha:0,creado:Date.now(),usado:Date.now()};
+  campos.push(c);guardar();$('nNombre').value='';abrirCampo(c.id);
+};
+function salirCampo(){pulverizando=false;tramoActual=null;capaTramo=null;$('btnSpray').classList.remove('on');textoBoton();if(rec){rec=null;capaRec.clearLayers();$('recBar').hidden=true}campo=null;G=null;O=null;capaCob.clearLayers();capaGuia.clearLayers();$('campoName').textContent='—';$('closeCampos').hidden=true}
+function abrirCampo(id){
+  if(pulverizando)$('btnSpray').click();
+  campo=campos.find(c=>c.id===id); campo.usado=Date.now(); guardar();
+  O=null; if(campo.guia)setOrigen(campo.guia.pts[0]); else if(pos)setOrigen(pos.ll);
+  if(pos)pos.p=toXY(pos.ll); refRumbo=null;
+  prepararGuia(); dibujarCobertura(); dibujarGuia(null);
+  $('campoName').textContent=campo.nombre+' · '+labor().n; $('closeCampos').hidden=false; textoBoton();
+  cerrarPaneles();
+  const capas=[...campo.cob.filter(t=>t.length>1)];
+  if(campo.guia)capas.push(campo.guia.pts);
+  if(capas.length){map.fitBounds(L.latLngBounds(capas.flat()).pad(0.2));seguir=false;$('btnSeguir').classList.remove('on')}
+  $('ha').textContent=fmt(campo.ha||0,2);
+  if(gpsId==null)iniciarGPS();
+  mantenerPantalla();
+  if(pos)guiar();
+}
+$('btnCampos').onclick=()=>{dibujarLista();$('panelCampos').hidden=false};
+$('closeCampos').onclick=()=>$('panelCampos').hidden=true;
+
+function actualizarPanelGuia(){
+  const t=campo.guia?({ab:'Recta A-B',curva:'Curva',contorno:'Contorno'})[campo.guia.tipo]:null;
+  $('guiaEstado').textContent=t?'Guía actual: '+t+'. Si marcás una nueva, reemplaza a esta.':'Sin guía marcada todavía.';
+  $('gAncho').value=campo.ancho; $('gLabor').value=campo.labor||'pulverizar';
+  $('shiftVal').textContent=fmt(campo.shift||0)+' m';
+}
+$('btnGuia').onclick=()=>{if(!campo){toast('Primero abrí o creá un campo');return}actualizarPanelGuia();$('panelGuia').hidden=false};
+$('closeGuia').onclick=()=>$('panelGuia').hidden=true;
+document.querySelectorAll('[data-nueva]').forEach(b=>b.onclick=()=>iniciarRec(b.dataset.nueva));
+$('gLabor').onchange=()=>{campo.labor=$('gLabor').value;guardar();textoBoton();dibujarCobertura();$('campoName').textContent=campo.nombre+' · '+labor().n};
+$('gAncho').onchange=()=>{const v=parseFloat(String($('gAncho').value).replace(',','.'));if(v>0){campo.ancho=v;guardar();kDibujado=null;dibujarCobertura();guiar()}};
+function mover(d){campo.shift=Math.round(((campo.shift||0)+d)*10)/10;$('shiftVal').textContent=fmt(campo.shift)+' m';guardar();kDibujado=null;guiar()}
+$('shiftM').onclick=()=>mover(-0.5);
+$('shiftP').onclick=()=>mover(0.5);
+function confirmar(btn,txt,accion){
+  if(btn.dataset.ok){accion();delete btn.dataset.ok;btn.textContent=txt;return}
+  btn.dataset.ok=1;btn.textContent='Tocá de nuevo para confirmar';setTimeout(()=>{delete btn.dataset.ok;btn.textContent=txt},3000);
+}
+$('btnBorrarCob').onclick=function(){confirmar(this,'Borrar lo pulverizado',()=>{if(pulverizando)$('btnSpray').click();campo.cob=[];campo.ha=0;guardar();dibujarCobertura();$('ha').textContent='0,00';toast('Cobertura borrada')})};
+$('btnBorrarGuia').onclick=function(){confirmar(this,'Borrar la guía',()=>{campo.guia=null;G=null;guardar();dibujarGuia(null);guiar();actualizarPanelGuia();toast('Guía borrada')})};
+
+/* Exportar / importar */
+$('btnExport').onclick=()=>{
+  const blob=new Blob([JSON.stringify({app:'guia-gps-gd',version:1,campos},null,1)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='guia-gps-campos-'+new Date().toISOString().slice(0,10)+'.json';
+  document.body.appendChild(a);a.click();a.remove();
+};
+$('btnImport').onclick=()=>$('fileImport').click();
+$('fileImport').onchange=e=>{
+  const f=e.target.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>{try{
+    const data=JSON.parse(r.result);const lista=data.campos||[];let n=0;
+    lista.forEach(c=>{if(c&&c.id&&c.nombre){const i=campos.findIndex(x=>x.id===c.id);if(i>=0)campos[i]=c;else campos.push(c);n++}});
+    guardar();dibujarLista();toast(n+' campos importados');
+  }catch(err){toast('El archivo no es una copia válida')}};
+  r.readAsText(f);e.target.value='';
+};
+
+/* Inicio */
+const ledBox=$('leds');for(let i=0;i<15;i++)ledBox.appendChild(document.createElement('i'));
+dibujarLista();
+</script>
+</body>
+</html>
